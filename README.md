@@ -37,7 +37,7 @@ store-front   nginx   store.local   192.168.49.2    80
 
 Map the host to the Ingress IP
 
-The hostname in k8s/manifest.yaml (store.local by default) is fake — no
+The hostname in k8s/manifest.yaml (store.local by default) is fake, no
 public DNS resolves it. Add it to your local hosts file so the browser can find
 your cluster.
 
