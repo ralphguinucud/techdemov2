@@ -8,7 +8,7 @@ docker compose -f docker-compose-quickstart.yml up --build
 store-front -> http://localhost:8080
 
 
-### Local Kubernetes — minikube (Windows)
+### Local Kubernetes - minikube (Windows)
 
 
  1. Start the cluster
