@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  labels:
+    app: product-service
+    {{- include "aks-store.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.productService.replicas }}
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: product-service
+          image: {{ include "aks-store.image" (dict "repo" .Values.image.repository "name" "product-service" "tag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.productService.port }}
+          resources:
+            {{- toYaml .Values.productService.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.productService.port }} }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.productService.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  labels:
+    app: product-service
+spec:
+  type: ClusterIP
+  selector:
+    app: product-service
+  ports:
+    - name: http
+      port: {{ .Values.productService.port }}
+      targetPort: {{ .Values.productService.port }}

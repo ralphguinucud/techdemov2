@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-configs
+data:
+  ORDER_QUEUE_HOSTNAME: rabbitmq
+  ORDER_QUEUE_PORT: "5672"
+  ORDER_QUEUE_NAME: orders
+  FASTIFY_ADDRESS: 0.0.0.0
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: order-service-secrets
+type: Opaque
+stringData:
+  ORDER_QUEUE_USERNAME: {{ .Values.rabbitmq.user | quote }}
+  ORDER_QUEUE_PASSWORD: {{ .Values.rabbitmq.password | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+    {{- include "aks-store.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.orderService.replicas }}
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      initContainers:
+        - name: wait-for-rabbitmq
+          image: busybox:1.37.0
+          command: ["sh", "-c", "until nc -zv rabbitmq 5672; do echo waiting; sleep 2; done"]
+          resources:
+            requests: { cpu: 1m, memory: 16Mi }
+            limits:   { cpu: 50m, memory: 64Mi }
+      containers:
+        - name: order-service
+          image: {{ include "aks-store.image" (dict "repo" .Values.image.repository "name" "order-service" "tag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.orderService.port }}
+          envFrom:
+            - configMapRef: { name: order-service-configs }
+            - secretRef:    { name: order-service-secrets }
+          resources:
+            {{- toYaml .Values.orderService.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /health, port: {{ .Values.orderService.port }} }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: {{ .Values.orderService.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+spec:
+  type: ClusterIP
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: {{ .Values.orderService.port }}
+      targetPort: {{ .Values.orderService.port }}

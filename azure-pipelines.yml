@@ -1,0 +1,102 @@
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - src/**
+      - charts/**
+      - k8s/**
+      - azure-pipelines.yml
+
+variables:
+  acrServiceConnection: acr-connection
+  azureServiceConnection: azure-rm-conn
+  imageTag: $(Build.BuildId)
+
+stages:
+  - stage: CI
+    displayName: Build, test, push
+    jobs:
+      - job: BuildAndPush
+        displayName: Build images
+        pool:
+          name: Default
+        strategy:
+          matrix:
+            store-front:
+              servicePath: src/store-front
+              imageName: store-front
+              testCmd: ''
+            order-service:
+              servicePath: src/order-service
+              imageName: order-service
+              testCmd: 'npm ci && npm test --if-present'
+            product-service:
+              servicePath: src/product-service
+              imageName: product-service
+              testCmd: 'go test ./...'
+        steps:
+          - task: Bash@3
+            displayName: Run tests
+            condition: ne(variables['testCmd'], '')
+            inputs:
+              targetType: inline
+              workingDirectory: $(servicePath)
+              script: $(testCmd)
+
+          - task: Docker@2
+            displayName: Build & push to ACR
+            inputs:
+              containerRegistry: $(acrServiceConnection)
+              repository: $(imageName)
+              command: buildAndPush
+              Dockerfile: $(servicePath)/Dockerfile
+              buildContext: $(servicePath)
+              tags: |
+                $(imageTag)
+                
+
+  - stage: CD
+    displayName: Deploy to AKS
+    dependsOn: CI
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: HelmDeploy
+        displayName: helm upgrade
+        environment: aks-store-prod
+        pool:
+          name: Default
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: HelmInstaller@1
+                  inputs:
+                    helmVersionToInstall: latest
+
+                - task: AzureCLI@2
+                  displayName: Get AKS credentials
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(aksResourceGroup) \
+                        --name $(aksClusterName) \
+                        --overwrite-existing
+                      echo "##vso[task.setvariable variable=KUBECONFIG]$HOME/.kube/config"
+
+                - task: Bash@3
+                  displayName: helm upgrade --install
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -euo pipefail
+                      helm upgrade --install $(helmReleaseName) ./charts/aks-store \
+                        --namespace aks-store --create-namespace \
+                        --set image.repository=$(acrName).azurecr.io \
+                        --set image.tag=$(imageTag) \
+                        --wait --timeout 5m

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aks-store
+description: AKS Store Demo quickstart - store-front, order-service, product-service, rabbitmq
+type: application
+version: 0.1.0
+appVersion: "2.1.0"

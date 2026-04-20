@@ -1,0 +1,279 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aks-store
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-secrets
+  namespace: aks-store
+type: Opaque
+data:
+  RABBITMQ_DEFAULT_USER: dXNlcm5hbWU=
+  RABBITMQ_DEFAULT_PASS: cGFzc3dvcmQ=
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-enabled-plugins
+  namespace: aks-store
+data:
+  rabbitmq_enabled_plugins: |
+    [rabbitmq_management,rabbitmq_prometheus,rabbitmq_amqp1_0].
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: aks-store
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: rabbitmq
+          image: mcr.microsoft.com/azurelinux/base/rabbitmq-server:3.13
+          ports:
+            - containerPort: 5672
+              name: amqp
+            - containerPort: 15672
+              name: http
+          envFrom:
+            - secretRef:
+                name: rabbitmq-secrets
+          resources:
+            requests: { cpu: 10m, memory: 128Mi }
+            limits:   { cpu: 250m, memory: 256Mi }
+          volumeMounts:
+            - name: plugins
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+      volumes:
+        - name: plugins
+          configMap:
+            name: rabbitmq-enabled-plugins
+            items:
+              - key: rabbitmq_enabled_plugins
+                path: enabled_plugins
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: aks-store
+spec:
+  type: ClusterIP
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: http
+      port: 15672
+      targetPort: 15672
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-configs
+  namespace: aks-store
+data:
+  ORDER_QUEUE_HOSTNAME: rabbitmq
+  ORDER_QUEUE_PORT: "5672"
+  ORDER_QUEUE_NAME: orders
+  FASTIFY_ADDRESS: 0.0.0.0
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: order-service-secrets
+  namespace: aks-store
+type: Opaque
+data:
+  ORDER_QUEUE_USERNAME: dXNlcm5hbWU=
+  ORDER_QUEUE_PASSWORD: cGFzc3dvcmQ=
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: aks-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      initContainers:
+        - name: wait-for-rabbitmq
+          image: busybox:1.37.0
+          command: ["sh", "-c", "until nc -zv rabbitmq 5672; do echo waiting; sleep 2; done"]
+          resources:
+            requests: { cpu: 1m, memory: 16Mi }
+            limits:   { cpu: 50m, memory: 64Mi }
+      containers:
+        - name: order-service
+          image: ghcr.io/azure-samples/aks-store-demo/order-service:2.1.0
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: order-service-configs }
+            - secretRef:    { name: order-service-secrets }
+          resources:
+            requests: { cpu: 1m, memory: 50Mi }
+            limits:   { cpu: 75m, memory: 128Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: aks-store
+spec:
+  type: ClusterIP
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: aks-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: product-service
+          image: ghcr.io/azure-samples/aks-store-demo/product-service:2.1.0
+          ports:
+            - containerPort: 3002
+          resources:
+            requests: { cpu: 1m, memory: 4Mi }
+            limits:   { cpu: 50m, memory: 64Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 3002 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 3002 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: aks-store
+spec:
+  type: ClusterIP
+  selector:
+    app: product-service
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: store-front
+  namespace: aks-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: store-front
+  template:
+    metadata:
+      labels:
+        app: store-front
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: store-front
+          image: ghcr.io/azure-samples/aks-store-demo/store-front:2.1.0
+          ports:
+            - containerPort: 8080
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: store-front
+  namespace: aks-store
+spec:
+  type: ClusterIP
+  selector:
+    app: store-front
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: store-front
+  namespace: aks-store
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: store.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: store-front
+                port:
+                  number: 80

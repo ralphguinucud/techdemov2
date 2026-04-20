@@ -1,0 +1,22 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+
+# Helm
+charts/*/charts/
+charts/*.tgz
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Secrets
+*.pem
+*.key
+.env
