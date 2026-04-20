@@ -89,7 +89,7 @@ acr_name = "aksstoreacrtrg8y"
 
 aks_name = "aks-aksstore"
 
-kubeconfig = <sensitive>
+kubeconfig = <sensitive_data>
 
 resource_group = "rsg-aksstore"
 
